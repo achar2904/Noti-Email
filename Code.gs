@@ -447,6 +447,9 @@ function findEmployee(masterSheet, resignedSheet, rawQuery) {
 // ==============================================================================
 // 5. DAILY TIME-DRIVEN TRIGGER
 // ==============================================================================
+/**
+ * ตรวจสอบคิวเมลพนักงานที่ถึงกำหนดเตือน (3 ระยะ: ล่วงหน้า 7 วัน, ล่วงหน้า 3 วัน, ถึงวันครบกำหนด)
+ */
 function checkResignedEmailsAndNotify() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheet = ss.getSheetByName(CONFIG.SHEET_RESIGNED);
@@ -454,47 +457,120 @@ function checkResignedEmailsAndNotify() {
 
   const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 9).getValues();
   const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const todayStr = Utilities.formatDate(today, CONFIG.TIMEZONE, 'yyyy-MM-dd');
+  const [tYear, tMonth, tDay] = todayStr.split('-').map(Number);
+  const todayDateOnly = new Date(tYear, tMonth - 1, tDay);
 
-  const dueEmployees = [];
-  const rowsToUpdate = [];
+  const due7DaysList = [];
+  const rows7DaysToUpdate = [];
+
+  const due3DaysList = [];
+  const rows3DaysToUpdate = [];
+
+  const dueTodayList = [];
+  const rowsDueToUpdate = [];
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const rowIndex = i + 2;
     const dueDateRaw = row[5];
-    const status = String(row[6] || '').trim().toLowerCase();
+    const status = String(row[6] || '').trim();
+    const statusLower = status.toLowerCase();
 
-    if (status === 'notified' || status === 'closed' || status === 'cancelled' || !dueDateRaw) {
+    // ข้ามรายการที่ปิดงานแล้ว, ยกเลิกการลาออก หรือไม่มีวันที่
+    if (statusLower === 'closed' || statusLower === 'cancelled' || !dueDateRaw) {
       continue;
     }
 
-    const dueDate = new Date(dueDateRaw);
-    dueDate.setHours(0, 0, 0, 0);
+    const dueDateObj = new Date(dueDateRaw);
+    if (isNaN(dueDateObj.getTime())) continue;
 
-    if (today >= dueDate) {
-      dueEmployees.push({
-        empId: row[0] || '-',
-        name: row[1] || '-',
-        email: row[2] || '-',
-        dept: row[3] || '-',
-        resignDateText: formatThaiDateDisplay(new Date(row[4])),
-        dueDateText: formatThaiDateDisplay(dueDate),
-        sheetUrl: ss.getUrl()
-      });
-      rowsToUpdate.push(rowIndex);
+    const dueDateStr = Utilities.formatDate(dueDateObj, CONFIG.TIMEZONE, 'yyyy-MM-dd');
+    const [dYear, dMonth, dDay] = dueDateStr.split('-').map(Number);
+    const dueDateOnly = new Date(dYear, dMonth - 1, dDay);
+
+    const diffMs = dueDateOnly.getTime() - todayDateOnly.getTime();
+    const daysRemaining = Math.round(diffMs / (1000 * 60 * 60 * 24));
+
+    const empObj = {
+      empId: row[0] || '-',
+      name: row[1] || '-',
+      email: row[2] || '-',
+      dept: row[3] || '-',
+      resignDateText: formatThaiDateDisplay(new Date(row[4])),
+      dueDateText: formatThaiDateDisplay(dueDateObj),
+      daysRemaining: daysRemaining,
+      sheetUrl: ss.getUrl()
+    };
+
+    // 1. ครบกำหนด 3 เดือน (ถึงกำหนดวันนี้ หรือ เลยกำหนด)
+    if (daysRemaining <= 0) {
+      if (status !== 'ครบกำหนดแล้ว' && statusLower !== 'notified') {
+        empObj.stage = 'DUE';
+        dueTodayList.push(empObj);
+        rowsDueToUpdate.push(rowIndex);
+      }
+    }
+    // 2. แจ้งเตือนล่วงหน้า 3 วัน (เหลือ 1 ถึง 3 วัน)
+    else if (daysRemaining <= 3) {
+      if (status !== 'เตือน 3 วันแล้ว' && status !== 'ครบกำหนดแล้ว' && statusLower !== 'notified') {
+        empObj.stage = '3D';
+        due3DaysList.push(empObj);
+        rows3DaysToUpdate.push(rowIndex);
+      }
+    }
+    // 3. แจ้งเตือนล่วงหน้า 7 วัน (เหลือ 4 ถึง 7 วัน)
+    else if (daysRemaining <= 7) {
+      if (status === 'Pending' || status === '') {
+        empObj.stage = '7D';
+        due7DaysList.push(empObj);
+        rows7DaysToUpdate.push(rowIndex);
+      }
     }
   }
 
-  if (dueEmployees.length === 0) return;
+  const timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
 
-  const success = sendPushFlexNotification(dueEmployees);
-  if (success) {
-    const timestamp = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
-    rowsToUpdate.forEach(rIdx => {
-      sheet.getRange(rIdx, 7).setValue('Notified');
-      sheet.getRange(rIdx, 8).setValue(timestamp);
-    });
+  // ส่งแจ้งเตือนกลุ่มครบกำหนด (วันนี้ / เลยกำหนด)
+  if (dueTodayList.length > 0) {
+    const success = sendPushFlexNotificationGroup(
+      dueTodayList,
+      `🚨 แจ้งเตือน: เมลพนักงานครบกำหนด 3 เดือน (${dueTodayList.length} ท่าน)`
+    );
+    if (success) {
+      rowsDueToUpdate.forEach(rIdx => {
+        sheet.getRange(rIdx, 7).setValue('ครบกำหนดแล้ว');
+        sheet.getRange(rIdx, 8).setValue(`${timestamp} (ครบกำหนด)`);
+      });
+    }
+  }
+
+  // ส่งแจ้งเตือนกลุ่มล่วงหน้า 3 วัน
+  if (due3DaysList.length > 0) {
+    const success = sendPushFlexNotificationGroup(
+      due3DaysList,
+      `⚠️ แจ้งเตือนล่วงหน้า 3 วัน: เมลพนักงานใกล้ครบกำหนด (${due3DaysList.length} ท่าน)`
+    );
+    if (success) {
+      rows3DaysToUpdate.forEach(rIdx => {
+        sheet.getRange(rIdx, 7).setValue('เตือน 3 วันแล้ว');
+        sheet.getRange(rIdx, 8).setValue(`${timestamp} (เตือน 3 วัน)`);
+      });
+    }
+  }
+
+  // ส่งแจ้งเตือนกลุ่มล่วงหน้า 7 วัน
+  if (due7DaysList.length > 0) {
+    const success = sendPushFlexNotificationGroup(
+      due7DaysList,
+      `🔔 แจ้งเตือนล่วงหน้า 7 วัน: เมลพนักงานใกล้ครบกำหนด (${due7DaysList.length} ท่าน)`
+    );
+    if (success) {
+      rows7DaysToUpdate.forEach(rIdx => {
+        sheet.getRange(rIdx, 7).setValue('เตือน 7 วันแล้ว');
+        sheet.getRange(rIdx, 8).setValue(`${timestamp} (เตือน 7 วัน)`);
+      });
+    }
   }
 }
 
@@ -866,6 +942,13 @@ function buildEmployeeStatusBubble(data) {
 
 function buildMonthDueListBubble(data) {
   const listItems = data.dueList.slice(0, 10).map((item, idx) => {
+    let statusColor = '#7F8C8D';
+    if (item.status === 'ครบกำหนดแล้ว' || item.status === 'Notified') statusColor = '#C0392B';
+    else if (item.status === 'เตือน 3 วันแล้ว') statusColor = '#E67E22';
+    else if (item.status === 'เตือน 7 วันแล้ว') statusColor = '#2980B9';
+    else if (item.status === 'Closed') statusColor = '#27AE60';
+    else if (item.status === 'Pending') statusColor = '#F39C12';
+
     return {
       type: 'box',
       layout: 'vertical',
@@ -877,7 +960,7 @@ function buildMonthDueListBubble(data) {
           layout: 'horizontal',
           contents: [
             { type: 'text', text: `${idx + 1}. ${item.name}`, weight: 'bold', size: 'sm', color: '#2C3E50', flex: 7 },
-            { type: 'text', text: item.status, size: 'xs', color: item.status === 'Pending' ? '#E67E22' : '#27AE60', weight: 'bold', align: 'end', flex: 3 }
+            { type: 'text', text: item.status, size: 'xs', color: statusColor, weight: 'bold', align: 'end', flex: 3 }
           ]
         },
         {
@@ -1019,18 +1102,53 @@ function buildHelpFlexBubble(sheetUrl) {
   };
 }
 
-function buildDueAlertBubble(emp) {
+/**
+ * สร้าง Flex Message Bubble สำหรับการแจ้งเตือนตามระยะ (7 วัน, 3 วัน, ครบกำหนด)
+ */
+function buildStageAlertBubble(emp) {
+  let headerColor = '#C0392B';
+  let headerTitle = '🚨 ครบกำหนด 3 เดือนแล้ว';
+  let headerSubtitle = 'โปรดดำเนินการลบ Mailbox & คืนสิทธิ์ License ทันที';
+  let subtitleColor = '#FADBD8';
+  let stageLabel = 'สถานะ';
+  let stageValue = '🔥 ถึงกำหนดจัดการวันนี้';
+  let stageColor = '#C0392B';
+  let btnLabel = 'เปิด Google Sheet จัดการเมล';
+
+  if (emp.stage === '7D') {
+    headerColor = '#2980B9';
+    headerTitle = '🔔 แจ้งเตือนล่วงหน้า 7 วัน';
+    headerSubtitle = 'เมลพนักงานใกล้ครบกำหนด 3 เดือน';
+    subtitleColor = '#D4E6F1';
+    stageLabel = 'ระยะเวลาที่เหลือ';
+    stageValue = `⏳ อีก ${emp.daysRemaining} วัน (เตรียมสำรองข้อมูล)`;
+    stageColor = '#2980B9';
+    btnLabel = 'เปิดดูใน Google Sheet';
+  } else if (emp.stage === '3D') {
+    headerColor = '#E67E22';
+    headerTitle = '⚠️ แจ้งเตือนล่วงหน้า 3 วัน';
+    headerSubtitle = 'ใกล้ถึงกำหนดลบ Mailbox & คืนสิทธิ์ License';
+    subtitleColor = '#FDEBD0';
+    stageLabel = 'ระยะเวลาที่เหลือ';
+    stageValue = `⏳ อีก ${emp.daysRemaining} วัน (เตรียมการลบเมล)`;
+    stageColor = '#E67E22';
+    btnLabel = 'เปิดดูใน Google Sheet';
+  } else if (emp.daysRemaining < 0) {
+    headerTitle = `🚨 เลยกำหนด 3 เดือนแล้ว (${Math.abs(emp.daysRemaining)} วัน)`;
+    stageValue = `🔥 เลยกำหนดมาแล้ว ${Math.abs(emp.daysRemaining)} วัน`;
+  }
+
   return {
     type: 'bubble',
     size: 'mega',
     header: {
       type: 'box',
       layout: 'vertical',
-      backgroundColor: '#E74C3C',
+      backgroundColor: headerColor,
       paddingAll: '16px',
       contents: [
-        { type: 'text', text: '🚨 ครบกำหนด 3 เดือนแล้ว', weight: 'bold', color: '#FFFFFF', size: 'md' },
-        { type: 'text', text: 'โปรดดำเนินการลบ Mailbox & คืนสิทธิ์ License', size: 'xs', color: '#FADBD8', margin: 'xs' }
+        { type: 'text', text: headerTitle, weight: 'bold', color: '#FFFFFF', size: 'md' },
+        { type: 'text', text: headerSubtitle, size: 'xs', color: subtitleColor, margin: 'xs' }
       ]
     },
     body: {
@@ -1073,8 +1191,16 @@ function buildDueAlertBubble(emp) {
               type: 'box',
               layout: 'horizontal',
               contents: [
-                { type: 'text', text: 'ครบกำหนด 3 เดือน', size: 'xs', color: '#E74C3C', weight: 'bold', flex: 4 },
-                { type: 'text', text: emp.dueDateText || '-', size: 'xs', color: '#E74C3C', weight: 'bold', flex: 6 }
+                { type: 'text', text: 'ครบกำหนด 3 เดือน', size: 'xs', color: '#95A5A6', flex: 4 },
+                { type: 'text', text: emp.dueDateText || '-', size: 'xs', color: '#2C3E50', weight: 'bold', flex: 6 }
+              ]
+            },
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                { type: 'text', text: stageLabel, size: 'xs', color: stageColor, weight: 'bold', flex: 4 },
+                { type: 'text', text: stageValue, size: 'xs', color: stageColor, weight: 'bold', flex: 6 }
               ]
             }
           ]
@@ -1089,13 +1215,17 @@ function buildDueAlertBubble(emp) {
         {
           type: 'button',
           style: 'primary',
-          color: '#1B4F72',
+          color: headerColor,
           height: 'sm',
-          action: { type: 'uri', label: 'เปิด Google Sheet จัดการเมล', uri: emp.sheetUrl || 'https://docs.google.com' }
+          action: { type: 'uri', label: btnLabel, uri: emp.sheetUrl || 'https://docs.google.com' }
         }
       ]
     }
   };
+}
+
+function buildDueAlertBubble(emp) {
+  return buildStageAlertBubble({ ...emp, stage: emp.stage || 'DUE' });
 }
 
 // ==============================================================================
@@ -1143,16 +1273,23 @@ function replyTextMessage(replyToken, text) {
   }
 }
 
-function sendPushFlexNotification(employees) {
+/**
+ * ส่ง LINE Push Flex Message แบบจัดกลุ่มตามระยะการแจ้งเตือน
+ */
+function sendPushFlexNotificationGroup(employees, altText) {
+  if (!CONFIG.LINE_CHANNEL_ACCESS_TOKEN || !CONFIG.LINE_TARGET_ID) {
+    Logger.log('[sendPushFlexNotificationGroup] Missing Token or Target ID');
+    return false;
+  }
   const chunkSize = 10;
   for (let i = 0; i < employees.length; i += chunkSize) {
     const chunk = employees.slice(i, i + chunkSize);
-    const bubbles = chunk.map(emp => buildDueAlertBubble(emp));
+    const bubbles = chunk.map(emp => buildStageAlertBubble(emp));
     const payload = {
       to: CONFIG.LINE_TARGET_ID,
       messages: [{
         type: 'flex',
-        altText: `🚨 แจ้งเตือน: เมลพนักงานลาออกครบ 3 เดือน (${chunk.length} ท่าน)`,
+        altText: altText || '🚨 แจ้งเตือนเมลพนักงานครบกำหนด',
         contents: bubbles.length === 1 ? bubbles[0] : { type: 'carousel', contents: bubbles }
       }]
     };
@@ -1173,6 +1310,10 @@ function sendPushFlexNotification(employees) {
     }
   }
   return true;
+}
+
+function sendPushFlexNotification(employees) {
+  return sendPushFlexNotificationGroup(employees, `🚨 แจ้งเตือน: เมลพนักงานครบกำหนด 3 เดือน (${employees.length} ท่าน)`);
 }
 
 // ==============================================================================
@@ -1204,10 +1345,19 @@ function initSheets() {
     resignedSheet.getRange(1, 1, 1, resignedHeaders.length).setValues([resignedHeaders]);
     resignedSheet.getRange(1, 1, 1, resignedHeaders.length).setBackground('#78281F').setFontColor('#FFFFFF').setFontWeight('bold').setHorizontalAlignment('center');
     resignedSheet.setFrozenRows(1);
-    const statusRule = SpreadsheetApp.newDataValidation().requireValueInList(['Pending', 'Notified', 'Closed', 'Cancelled'], true).build();
-    resignedSheet.getRange('G2:G1000').setDataValidation(statusRule);
-    resignedSheet.autoResizeColumns(1, resignedHeaders.length);
   }
+
+  // อัปเดต Dropdown สถานะแจ้งเตือนให้รองรับ 3 ระยะ: Pending, เตือน 7 วันแล้ว, เตือน 3 วันแล้ว, ครบกำหนดแล้ว, Closed, Cancelled
+  const statusRule = SpreadsheetApp.newDataValidation().requireValueInList([
+    'Pending',
+    'เตือน 7 วันแล้ว',
+    'เตือน 3 วันแล้ว',
+    'ครบกำหนดแล้ว',
+    'Closed',
+    'Cancelled'
+  ], true).build();
+  resignedSheet.getRange('G2:G1000').setDataValidation(statusRule);
+  resignedSheet.autoResizeColumns(1, resignedHeaders.length);
 
   Logger.log('[initSheets] ตรวจสอบและตั้งค่าหัวตารางทั้ง 2 ชีตเรียบร้อย');
 }
@@ -1225,4 +1375,40 @@ function setupDailyTrigger() {
     .create();
 
   Logger.log('[setupDailyTrigger] ตั้งเวลา Daily Trigger 09:00 น. สำเร็จ');
+}
+
+/**
+ * ฟังก์ชันสำหรับทดสอบส่งการ์ดแจ้งเตือนทั้ง 3 ระยะเข้ากลุ่ม LINE ทันที (สำหรับทดสอบ)
+ */
+function testNotificationStages() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const dummyEmp = {
+    empId: 'EMP-TEST',
+    name: 'ทดสอบ แจ้งเตือน 3 ระยะ',
+    email: 'test.alert@regent-chaam.com',
+    dept: 'IT Support',
+    resignDateText: '7 ต.ค. 2026',
+    dueDateText: '7 ม.ค. 2027',
+    sheetUrl: ss ? ss.getUrl() : 'https://docs.google.com'
+  };
+
+  Logger.log('1. กำลังส่งทดสอบแจ้งเตือนล่วงหน้า 7 วัน (การ์ดสีน้ำเงิน)...');
+  sendPushFlexNotificationGroup(
+    [{ ...dummyEmp, stage: '7D', daysRemaining: 7 }],
+    '🔔 [TEST] แจ้งเตือนล่วงหน้า 7 วัน'
+  );
+
+  Logger.log('2. กำลังส่งทดสอบแจ้งเตือนล่วงหน้า 3 วัน (การ์ดสีส้ม)...');
+  sendPushFlexNotificationGroup(
+    [{ ...dummyEmp, stage: '3D', daysRemaining: 3 }],
+    '⚠️ [TEST] แจ้งเตือนล่วงหน้า 3 วัน'
+  );
+
+  Logger.log('3. กำลังส่งทดสอบแจ้งเตือนครบกำหนดวันนี้ (การ์ดสีแดง)...');
+  sendPushFlexNotificationGroup(
+    [{ ...dummyEmp, stage: 'DUE', daysRemaining: 0 }],
+    '🚨 [TEST] แจ้งเตือนครบกำหนดวันนี้'
+  );
+
+  Logger.log('✅ ส่งทดสอบครบทั้ง 3 ระยะเรียบร้อยแล้วค่ะ');
 }

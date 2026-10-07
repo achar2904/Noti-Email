@@ -78,3 +78,28 @@ sequenceDiagram
         Webhook->>LINE: ตอบกลับ "🎉 ในเดือนนี้ไม่มีเมลพนักงานที่ครบกำหนดจัดการค่ะ"
     end
 ```
+
+---
+
+## ⏰ 4. ผังการทำงานระบบแจ้งเตือนอัตโนมัติประจำวัน (Daily Trigger: 3 ระยะ)
+
+ระบบตั้งเวลาตรวจเช็คทุกวันเวลา 09:00 น. (`checkResignedEmailsAndNotify`) โดยจะส่ง Push Message เข้าห้องแชตกลุ่มไอทีตามระยะเวลาที่เหลือ:
+
+```mermaid
+flowchart TD
+    Start([⏰ 09:00 น. Daily Trigger ทำงาน]) --> Scan[สแกนชีต: รายการเมลที่กำหนดออก]
+    Scan --> Filter{Status = Closed หรือ Cancelled?}
+    Filter -- ใช่ --> Skip[ข้ามรายการ]
+    Filter -- ไม่ใช่ --> Calc[คำนวณวันคงเหลือ daysRemaining]
+
+    Calc --> CondDue{daysRemaining <= 0 วัน?}
+    CondDue -- ใช่ (ยังไม่เตือนครบกำหนด) --> AlertDue["🚨 แจ้งเตือนครบกำหนดวันนี้ (การ์ดสีแดง)<br>อัปเดตสถานะ: ครบกำหนดแล้ว"]
+
+    CondDue -- ไม่ใช่ --> Cond3D{daysRemaining <= 3 วัน?}
+    Cond3D -- ใช่ (ยังไม่เตือน 3 วัน) --> Alert3D["⚠️ แจ้งเตือนล่วงหน้า 3 วัน (การ์ดสีส้ม)<br>อัปเดตสถานะ: เตือน 3 วันแล้ว"]
+
+    Cond3D -- ไม่ใช่ --> Cond7D{daysRemaining <= 7 วัน?}
+    Cond7D -- ใช่ (Status = Pending) --> Alert7D["🔔 แจ้งเตือนล่วงหน้า 7 วัน (การ์ดสีน้ำเงิน)<br>อัปเดตสถานะ: เตือน 7 วันแล้ว"]
+
+    Cond7D -- ไม่ใช่ --> End([รอรอบวันถัดไป])
+```
