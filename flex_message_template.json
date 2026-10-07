@@ -1,0 +1,148 @@
+{
+  "type": "bubble",
+  "size": "mega",
+  "header": {
+    "type": "box",
+    "layout": "vertical",
+    "backgroundColor": "#E74C3C",
+    "paddingAll": "16px",
+    "contents": [
+      {
+        "type": "text",
+        "text": "⚠️ แจ้งเตือนครบกำหนด 3 เดือน",
+        "weight": "bold",
+        "color": "#FFFFFF",
+        "size": "md"
+      },
+      {
+        "type": "text",
+        "text": "ดำเนินการตรวจสอบ/ลบ Mailbox & License",
+        "size": "xs",
+        "color": "#FADBD8",
+        "margin": "xs"
+      }
+    ]
+  },
+  "body": {
+    "type": "box",
+    "layout": "vertical",
+    "spacing": "md",
+    "paddingAll": "16px",
+    "contents": [
+      {
+        "type": "box",
+        "layout": "vertical",
+        "contents": [
+          {
+            "type": "text",
+            "text": "นาย สมชาย ตัวอย่าง",
+            "weight": "bold",
+            "size": "lg",
+            "color": "#1A252C"
+          },
+          {
+            "type": "text",
+            "text": "รหัส: EMP001 | แผนก: ฝ่ายขาย",
+            "size": "xs",
+            "color": "#7F8C8D",
+            "margin": "xs"
+          }
+        ]
+      },
+      {
+        "type": "separator",
+        "margin": "sm"
+      },
+      {
+        "type": "box",
+        "layout": "vertical",
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "box",
+            "layout": "horizontal",
+            "contents": [
+              {
+                "type": "text",
+                "text": "อีเมลที่ต้องจัดการ",
+                "size": "xs",
+                "color": "#95A5A6",
+                "flex": 4
+              },
+              {
+                "type": "text",
+                "text": "somchai.sample@company.com",
+                "size": "xs",
+                "color": "#2C3E50",
+                "weight": "bold",
+                "flex": 6,
+                "wrap": true
+              }
+            ]
+          },
+          {
+            "type": "box",
+            "layout": "horizontal",
+            "contents": [
+              {
+                "type": "text",
+                "text": "วันที่ลาออก",
+                "size": "xs",
+                "color": "#95A5A6",
+                "flex": 4
+              },
+              {
+                "type": "text",
+                "text": "2026-07-06",
+                "size": "xs",
+                "color": "#2C3E50",
+                "flex": 6
+              }
+            ]
+          },
+          {
+            "type": "box",
+            "layout": "horizontal",
+            "contents": [
+              {
+                "type": "text",
+                "text": "ครบกำหนด 3 เดือน",
+                "size": "xs",
+                "color": "#E74C3C",
+                "weight": "bold",
+                "flex": 4
+              },
+              {
+                "type": "text",
+                "text": "2026-10-06",
+                "size": "xs",
+                "color": "#E74C3C",
+                "weight": "bold",
+                "flex": 6
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "type": "box",
+    "layout": "vertical",
+    "spacing": "sm",
+    "paddingAll": "12px",
+    "contents": [
+      {
+        "type": "button",
+        "style": "primary",
+        "color": "#1B4F72",
+        "height": "sm",
+        "action": {
+          "type": "uri",
+          "label": "เปิดดูใน Google Sheet",
+          "uri": "https://docs.google.com/spreadsheets"
+        }
+      }
+    ]
+  }
+}
